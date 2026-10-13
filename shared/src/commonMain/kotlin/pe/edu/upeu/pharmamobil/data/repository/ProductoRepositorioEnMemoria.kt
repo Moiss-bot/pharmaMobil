@@ -1,46 +1,54 @@
 package pe.edu.upeu.pharmamobil.data.repository
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import pe.edu.upeu.pharmamobil.domain.error.ErrorApi
+import pe.edu.upeu.pharmamobil.domain.error.ErrorApiException
 import pe.edu.upeu.pharmamobil.domain.model.Producto
 import pe.edu.upeu.pharmamobil.domain.repository.ProductoRepository
+import kotlin.random.Random
 
-/**
- * Almacenamiento en memoria de productos. El id lo asigna el repositorio,
- * no la pantalla, para evitar identificadores duplicados.
- *
- * El delay simula la latencia que traera el backend REST, de modo que el
- * estado de carga de la pantalla sea visible desde ahora.
- *
- * Koin lo registra como single, asi que es un objeto compartido y sus metodos
- * son suspend: nada garantiza que dos llamadas no se crucen. El [Mutex]
- * protege la lista y el contador de ids de esa carrera.
- */
 class ProductoRepositorioEnMemoria : ProductoRepository {
 
-    private val candado = Mutex()
-    private val productos = mutableListOf<Producto>()
-    private var siguienteId = 1L
+    private val productos = mutableListOf(
+        Producto(id = 1L, nombre = "Paracetamol", precio = 8.50, stock = 100),
+        Producto(id = 2L, nombre = "Ibuprofeno", precio = 12.00, stock = 50),
+        Producto(id = 3L, nombre = "Amoxicilina", precio = 18.50, stock = 20)
+    )
 
     override suspend fun registrar(producto: Producto): Producto {
-        delay(RETARDO_REGISTRO_MS)
-        return candado.withLock {
-            val guardado = producto.copy(id = siguienteId++)
-            productos.add(guardado)
-            guardado
-        }
+        delay(Random.nextLong(300, 800))
+
+        val productoConId = producto.copy(
+            id = Random.nextLong(1, Long.MAX_VALUE)
+        )
+
+        productos.add(0, productoConId)
+        return productoConId
     }
 
     override suspend fun listar(): List<Producto> {
-        delay(RETARDO_LISTADO_MS)
-        return candado.withLock {
-            productos.toList()
-        }
+        delay(Random.nextLong(300, 800))
+        return productos.toList()
     }
 
-    private companion object {
-        const val RETARDO_REGISTRO_MS = 400L
-        const val RETARDO_LISTADO_MS = 600L
+    override suspend fun obtener(id: Long): Producto {
+        delay(Random.nextLong(300, 800))
+        return productos.firstOrNull { it.id == id }
+            ?: throw ErrorApiException(ErrorApi.NoEncontrado)
+    }
+
+    override suspend fun actualizar(producto: Producto): Producto {
+        delay(Random.nextLong(300, 800))
+        val indice = productos.indexOfFirst { it.id == producto.id }
+        if (indice < 0) throw ErrorApiException(ErrorApi.NoEncontrado)
+        productos[indice] = producto
+        return producto
+    }
+
+    override suspend fun eliminar(id: Long) {
+        delay(Random.nextLong(300, 800))
+        val indice = productos.indexOfFirst { it.id == id }
+        if (indice < 0) throw ErrorApiException(ErrorApi.NoEncontrado)
+        productos[indice] = productos[indice].copy(activo = false)
     }
 }

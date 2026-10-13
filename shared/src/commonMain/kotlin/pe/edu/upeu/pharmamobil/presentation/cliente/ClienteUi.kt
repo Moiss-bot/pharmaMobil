@@ -2,7 +2,6 @@ package pe.edu.upeu.pharmamobil.presentation.cliente
 
 import pe.edu.upeu.pharmamobil.domain.model.Cliente
 
-
 data class ClienteUi(
     val id: Long,
     val nombre: String,

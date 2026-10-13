@@ -1,5 +1,6 @@
 package pe.edu.upeu.pharmamobil.presentation.producto
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material3.Button
@@ -20,27 +23,45 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import pe.edu.upeu.pharmamobil.presentation.components.EstadoVacio
+import pe.edu.upeu.pharmamobil.presentation.components.MensajeError
 import pe.edu.upeu.pharmamobil.presentation.components.MensajeExito
 import pe.edu.upeu.pharmamobil.presentation.components.ValidatedTextField
+import pe.edu.upeu.pharmamobil.presentation.producto.ProductoUiState.Operacion
 
 @Composable
 fun ProductoScreen(
     viewModel: ProductoViewModel,
+    onVerDetalle: (Long) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    var tabSeleccionada by remember { mutableStateOf(0) }
+    val titulosTabs = listOf("Activos", "Inactivos", "Bajo stock")
+
+    val tipoEnCurso = (uiState.operacion as? Operacion.EnCurso)?.tipo
+    val guardando = tipoEnCurso == Operacion.Tipo.Crear ||
+            tipoEnCurso == Operacion.Tipo.Actualizar
+    val eliminando = tipoEnCurso == Operacion.Tipo.Eliminar
 
     Column(
         modifier = modifier
@@ -51,18 +72,33 @@ fun ProductoScreen(
 
         FormularioProductoCard(
             formulario = uiState.formulario,
-            registrando = uiState.registrando,
+            guardando = guardando,
             onNombreChange = viewModel::onNombreChange,
             onPrecioChange = viewModel::onPrecioChange,
             onStockChange = viewModel::onStockChange,
-            onRegistrar = viewModel::registrar
+            onGuardar = viewModel::guardar,
+            onCancelar = viewModel::cancelarEdicion
         )
 
         uiState.mensajeExito?.let {
             MensajeExito(it)
         }
 
+        (uiState.operacion as? Operacion.Fallida)?.let {
+            MensajeError(it.mensaje)
+        }
+
         EncabezadoInventario(uiState.fase)
+
+        TabRow(selectedTabIndex = tabSeleccionada) {
+            titulosTabs.forEachIndexed { index, titulo ->
+                Tab(
+                    selected = tabSeleccionada == index,
+                    onClick = { tabSeleccionada = index },
+                    text = { Text(titulo) }
+                )
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -96,17 +132,41 @@ fun ProductoScreen(
                         modifier = Modifier.align(Alignment.Center)
                     )
 
-                is ProductoUiState.Fase.ConProductos ->
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(
-                            items = fase.productos,
-                            key = { it.id }
-                        ) { producto ->
-                            ProductoItem(producto)
+                is ProductoUiState.Fase.ConProductos -> {
+
+                    val productosFiltrados = when (tabSeleccionada) {
+                        0 -> fase.productos.filter { it.activo && !it.esBajoStock }
+                        1 -> fase.productos.filter { !it.activo }
+                        2 -> fase.productos.filter { it.esBajoStock }
+                        else -> emptyList()
+                    }
+
+                    if (productosFiltrados.isEmpty()) {
+                        EstadoVacio(
+                            icono = Icons.Default.Inventory2,
+                            titulo = "Nada en esta pestaña",
+                            descripcion = "No hay productos que coincidan con este filtro.",
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(
+                                items = productosFiltrados,
+                                key = { it.id }
+                            ) { producto ->
+                                ProductoItem(
+                                    producto = producto,
+                                    eliminando = eliminando,
+                                    onEditar = { viewModel.editar(producto) },
+                                    onEliminar = { viewModel.eliminar(producto.id) },
+                                    onVerDetalle = { onVerDetalle(producto.id) }
+                                )
+                            }
                         }
                     }
+                }
 
                 is ProductoUiState.Fase.Error ->
                     EstadoVacio(
@@ -130,11 +190,12 @@ fun ProductoScreen(
 @Composable
 private fun FormularioProductoCard(
     formulario: FormularioProducto,
-    registrando: Boolean,
+    guardando: Boolean,
     onNombreChange: (String) -> Unit,
     onPrecioChange: (String) -> Unit,
     onStockChange: (String) -> Unit,
-    onRegistrar: () -> Unit
+    onGuardar: () -> Unit,
+    onCancelar: () -> Unit
 ) {
 
     Card(
@@ -147,7 +208,7 @@ private fun FormularioProductoCard(
         ) {
 
             Text(
-                text = "Registrar producto",
+                text = if (formulario.editando) "Editar producto" else "Registrar producto",
                 style = MaterialTheme.typography.titleMedium
             )
 
@@ -186,12 +247,33 @@ private fun FormularioProductoCard(
                 )
             }
 
-            Button(
-                onClick = onRegistrar,
-                enabled = !registrando,
-                modifier = Modifier.fillMaxWidth()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(if (registrando) "Registrando…" else "Registrar")
+
+                Button(
+                    onClick = onGuardar,
+                    enabled = !guardando,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        when {
+                            guardando -> "Guardando…"
+                            formulario.editando -> "Guardar cambios"
+                            else -> "Registrar"
+                        }
+                    )
+                }
+
+                if (formulario.editando) {
+                    OutlinedButton(
+                        onClick = onCancelar,
+                        enabled = !guardando
+                    ) {
+                        Text("Cancelar")
+                    }
+                }
             }
         }
     }
@@ -230,17 +312,23 @@ private fun EncabezadoInventario(
 
 @Composable
 private fun ProductoItem(
-    producto: ProductoUi
+    producto: ProductoUi,
+    eliminando: Boolean,
+    onEditar: () -> Unit,
+    onEliminar: () -> Unit,
+    onVerDetalle: () -> Unit
 ) {
 
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onVerDetalle)
     ) {
 
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
 
             Surface(
@@ -291,6 +379,27 @@ private fun ProductoItem(
                         )
                     )
                 }
+            }
+
+            IconButton(
+                onClick = onEditar,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Editar ${producto.nombre}"
+                )
+            }
+
+            IconButton(
+                onClick = onEliminar,
+                enabled = !eliminando,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Eliminar ${producto.nombre}"
+                )
             }
         }
     }
